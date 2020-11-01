@@ -2,6 +2,7 @@
 <html>
 <head>
   <title>LED Control</title>
+  <link rel="stylesheet" href="https://use.fontawesome.com/releases/v5.7.2/css/all.css" integrity="sha384-fnmOCqbTlWIlj8LyTjo7mOUStjsKC4pOpQbqyi7RrhN7udi9RwhKkMHpvLbHG9Sr" crossorigin="anonymous">
   <link href='https://fonts.googleapis.com/css?family=Roboto:300' rel='stylesheet' type='text/css'>
   <link href='main.css' rel='stylesheet' type='text/css'>
   <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon-180x180.png">
@@ -35,6 +36,12 @@
       </table>
       <p style="margin:8px 0px">
         <button id="rainbow" class="button" style="background-color:#999" onclick="rainbowEffect();">Rainbow</button>
+      </p>
+      <p>
+        <i class="fas fa-thermometer-half" style="color:#059e8a;"></i> 
+        <span class="ds-labels">Temperature Celsius</span> 
+        <span id="temperature-C">---</span>
+        <sup class="units">&deg;C</sup>
       </p>
     </div>
   </center>

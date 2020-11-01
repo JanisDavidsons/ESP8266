@@ -2,18 +2,42 @@
 #include <ESP8266WebServer.h>
 #include <LittleFS.h> // Include the SPIFFS library
 #include <WebSocketsServer.h>
+#include <WiFiUdp.h>
+#include <OneWire.h>
+#include <DallasTemperature.h>
 
 const char *ssid = "Janis_network";  // The SSID (name) of the Wi-Fi network you want to connect to
 const char *password = "8378969948"; // The password of the Wi-Fi network
 
+const int oneWireBus = 4;
+OneWire oneWire(oneWireBus);
+DallasTemperature sensors(&oneWire);
+
+unsigned long intervalNTP = 60000; // Request NTP time every minute
+unsigned long prevNTP = 0;
+unsigned long lastNTPResponse = millis();
+uint32_t timeUNIX = 0;
+unsigned long prevActualTime = 0;
+
 ESP8266WebServer server(80);    // Create a webserver object that listens for HTTP request on port 80
 WebSocketsServer webSocket(81); // create a websocket server on port 81
+WiFiUDP UDP;                    // Create an instance of the WiFiUDP class to send and receive NTP server address
+File fsUploadFile;              // a File object to temporarily store the received file
 
-File fsUploadFile;                      // a File object to temporarily store the received file
 String getContentType(String filename); // convert the file extension to the MIME type
-bool handleFileRead(String path);       // send the right file to the client (if it exists)
-void handleFileUpload();                // upload a new file to the SPIFFS
+const char *NTPServerName = "time.nist.gov";
+IPAddress timeServerIP;           // IPAddress object to store ip
+const int NTP_PACKET_SIZE = 48;   // NTP time stamp is in the first 48 bytes of the message
+byte NTPBuffer[NTP_PACKET_SIZE];  // buffer to hold incoming and outgoing packets
+bool handleFileRead(String path); // send the right file to the client (if it exists)
+void handleFileUpload();          // upload a new file to the SPIFFS
 void startServer();
+void startUDP();
+void sendNTPpacket(IPAddress &address);
+uint32_t getTime();
+inline int getHours(uint32_t actualTime);
+inline int getMinutes(uint32_t actualTime);
+inline int getSeconds(uint32_t actualTime);
 void startWebSocket();
 void startSPIFFS();
 void startWiFi();
@@ -21,6 +45,9 @@ void startWiFi();
 #define LED_RED 15 // specify the pins with an RGB LED connected
 #define LED_GREEN 12
 #define LED_BLUE 13
+
+float temperature = -127;
+float previousTemp = -127;
 
 void setup(void)
 {
@@ -33,6 +60,10 @@ void setup(void)
   delay(10);
   Serial.println('\n');
 
+  sensors.begin();
+
+  startUDP();
+
   startWiFi(); // Start a Wi-Fi access point, and try to connect to some given access points. Then wait for either an AP or STA connection
 
   startSPIFFS(); // Start the SPIFFS and list all contents
@@ -40,6 +71,17 @@ void setup(void)
   startWebSocket(); // Start a WebSocket server
 
   startServer(); // Start a HTTP server with a file read handler and an upload handler
+  if (!WiFi.hostByName(NTPServerName, timeServerIP))
+  { // Get the IP address of the NTP server
+    Serial.println("DNS lookup failed. Rebooting.");
+    Serial.flush();
+    ESP.reset();
+  }
+  Serial.print("Time server IP:\t");
+  Serial.println(timeServerIP);
+
+  Serial.println("\r\nSending NTP request ...");
+  sendNTPpacket(timeServerIP);
 
   server.on("/upload", HTTP_GET, []() {                 // if the client requests the upload page
     if (!handleFileRead("/upload.html"))                // send it if it exists
@@ -65,6 +107,51 @@ int hue = 0;
 
 void loop(void)
 {
+  unsigned long currentMillis = millis();
+  if (currentMillis - prevNTP > intervalNTP)
+  { // If a minute has passed since last NTP request
+    prevNTP = currentMillis;
+    Serial.println("\r\nSending NTP request ...");
+    sendNTPpacket(timeServerIP); // Send an NTP request
+  }
+
+  uint32_t time = getTime(); // Check if an NTP response has arrived and get the (UNIX) time
+  if (time)
+  { // If a new timestamp has been received
+    timeUNIX = time;
+    Serial.print("NTP response:\t");
+    Serial.println(timeUNIX);
+    lastNTPResponse = currentMillis;
+  }
+  else if ((currentMillis - lastNTPResponse) > 3600000)
+  {
+    Serial.println("More than 1 hour since last NTP response. Rebooting.");
+    Serial.flush();
+    ESP.reset();
+  }
+
+  uint32_t actualTime = timeUNIX + (currentMillis - lastNTPResponse) / 1000;
+  if (actualTime != prevActualTime && timeUNIX != 0)
+  { // If a second has passed since last print
+    prevActualTime = actualTime;
+    Serial.printf("\rUTC time:\t%d:%d:%d   ", getHours(actualTime), getMinutes(actualTime), getSeconds(actualTime));
+    Serial.println("");
+    sensors.requestTemperatures();
+
+    temperature = sensors.getTempCByIndex(0);
+    if (previousTemp != temperature)
+    {
+      Serial.print(temperature);
+      Serial.println("ºC");
+
+      String broadcastTemp = String(temperature);
+
+      webSocket.broadcastTXT(broadcastTemp);
+
+      previousTemp = temperature;
+    }
+  }
+
   server.handleClient(); // Listen for HTTP requests from clients
 
   webSocket.loop();      // constantly check for websocket events
@@ -169,7 +256,6 @@ void handleFileUpload()
 
 void webSocketEvent(uint8_t num, WStype_t type, uint8_t *payload, size_t lenght)
 { // When a WebSocket message is received
-    Serial.printf("webSocketCalled!");
 
   switch (type)
   {
@@ -240,6 +326,15 @@ void startServer()
   Serial.println("HTTP server started");
 }
 
+void startUDP()
+{
+  Serial.println("Starting UDP");
+  UDP.begin(123); // Start listening for UDP messages on port 123
+  Serial.print("Local port:\t");
+  Serial.println(UDP.localPort());
+  Serial.println();
+}
+
 void startWebSocket()
 {
   webSocket.begin();                 // start the websocket server
@@ -296,4 +391,47 @@ String formatBytes(size_t bytes)
   {
     return String(bytes / 1024.0 / 1024.0) + "MB";
   }
+}
+
+uint32_t getTime()
+{
+  if (UDP.parsePacket() == 0)
+  { // If there's no response (yet)
+    return 0;
+  }
+  UDP.read(NTPBuffer, NTP_PACKET_SIZE); // read the packet into the buffer
+  // Combine the 4 timestamp bytes into one 32-bit number
+  uint32_t NTPTime = (NTPBuffer[40] << 24) | (NTPBuffer[41] << 16) | (NTPBuffer[42] << 8) | NTPBuffer[43];
+  // Convert NTP time to a UNIX timestamp:
+  // Unix time starts on Jan 1 1970. That's 2208988800 seconds in NTP time:
+  const uint32_t seventyYears = 2208988800UL;
+  // subtract seventy years:
+  uint32_t UNIXTime = NTPTime - seventyYears;
+  return UNIXTime;
+}
+
+void sendNTPpacket(IPAddress &address)
+{
+  memset(NTPBuffer, 0, NTP_PACKET_SIZE); // set all bytes in the buffer to 0
+  // Initialize values needed to form NTP request
+  NTPBuffer[0] = 0b11100011; // LI, Version, Mode
+  // send a packet requesting a timestamp:
+  UDP.beginPacket(address, 123); // NTP requests are to port 123
+  UDP.write(NTPBuffer, NTP_PACKET_SIZE);
+  UDP.endPacket();
+}
+
+inline int getSeconds(uint32_t UNIXTime)
+{
+  return UNIXTime % 60;
+}
+
+inline int getMinutes(uint32_t UNIXTime)
+{
+  return UNIXTime / 60 % 60;
+}
+
+inline int getHours(uint32_t UNIXTime)
+{
+  return UNIXTime / 3600 % 24;
 }
