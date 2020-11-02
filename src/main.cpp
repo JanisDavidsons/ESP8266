@@ -5,6 +5,7 @@
 #include <WiFiUdp.h>
 #include <OneWire.h>
 #include <DallasTemperature.h>
+#include "Temperature.h"
 
 const char *ssid = "Janis_network";  // The SSID (name) of the Wi-Fi network you want to connect to
 const char *password = "8378969948"; // The password of the Wi-Fi network
@@ -12,6 +13,7 @@ const char *password = "8378969948"; // The password of the Wi-Fi network
 const int oneWireBus = 4;
 OneWire oneWire(oneWireBus);
 DallasTemperature sensors(&oneWire);
+Temperature temperature(&sensors);
 
 unsigned long intervalNTP = 60000; // Request NTP time every minute
 unsigned long prevNTP = 0;
@@ -41,12 +43,13 @@ inline int getSeconds(uint32_t actualTime);
 void startWebSocket();
 void startSPIFFS();
 void startWiFi();
+int getTemperature();
 
 #define LED_RED 15 // specify the pins with an RGB LED connected
 #define LED_GREEN 12
 #define LED_BLUE 13
 
-float temperature = -127;
+float currentTemperature = -127;
 float previousTemp = -127;
 
 void setup(void)
@@ -71,6 +74,7 @@ void setup(void)
   startWebSocket(); // Start a WebSocket server
 
   startServer(); // Start a HTTP server with a file read handler and an upload handler
+
   if (!WiFi.hostByName(NTPServerName, timeServerIP))
   { // Get the IP address of the NTP server
     Serial.println("DNS lookup failed. Rebooting.");
@@ -131,25 +135,23 @@ void loop(void)
   }
 
   uint32_t actualTime = timeUNIX + (currentMillis - lastNTPResponse) / 1000;
+
   if (actualTime != prevActualTime && timeUNIX != 0)
-  { // If a second has passed since last print
+  { // If a second has passed
     prevActualTime = actualTime;
     Serial.printf("\rUTC time:\t%d:%d:%d   ", getHours(actualTime), getMinutes(actualTime), getSeconds(actualTime));
-    Serial.println("");
-    sensors.requestTemperatures();
+    Serial.println("\n");
+    
+    String temp = String(getTemperature());
+    webSocket.broadcastTXT(temp);
 
-    temperature = sensors.getTempCByIndex(0);
-    if (previousTemp != temperature)
-    {
-      Serial.print(temperature);
-      Serial.println("ºC");
+    Serial.print(String(temp));
+    Serial.println("ºC");
 
-      String broadcastTemp = String(temperature);
+    Serial.println(temperature.getTempInt());
+    Serial.println(temperature.getTempString());
+    Serial.println("temperature.getTempString()");
 
-      webSocket.broadcastTXT(broadcastTemp);
-
-      previousTemp = temperature;
-    }
   }
 
   server.handleClient(); // Listen for HTTP requests from clients
@@ -255,18 +257,18 @@ void handleFileUpload()
 }
 
 void webSocketEvent(uint8_t num, WStype_t type, uint8_t *payload, size_t lenght)
-{ // When a WebSocket message is received
+{
 
   switch (type)
   {
-  case WStype_DISCONNECTED: // if the websocket is disconnected
+  case WStype_DISCONNECTED:
     Serial.printf("[%u] Disconnected!\n", num);
     break;
   case WStype_CONNECTED:
-  { // if a new websocket connection is established
+  {
     IPAddress ip = webSocket.remoteIP(num);
     Serial.printf("[%u] Connected from %d.%d.%d.%d url: %s\n", num, ip[0], ip[1], ip[2], ip[3], payload);
-    rainbow = false; // Turn rainbow off when a new connection is established
+    rainbow = false;
   }
   break;
   case WStype_TEXT: // if new text data is received
@@ -290,6 +292,10 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t *payload, size_t lenght)
     { // the browser sends an N when the rainbow effect is disabled
       rainbow = false;
     }
+    else if (payload[0] == 'getTemp')
+    {
+    }
+
     break;
   }
 }
@@ -434,4 +440,17 @@ inline int getMinutes(uint32_t UNIXTime)
 inline int getHours(uint32_t UNIXTime)
 {
   return UNIXTime / 3600 % 24;
+}
+
+int getTemperature()
+{
+  sensors.requestTemperatures();
+
+  currentTemperature = sensors.getTempCByIndex(0);
+
+  if (previousTemp != currentTemperature)
+  {
+    previousTemp = currentTemperature;
+  }
+  return currentTemperature;
 }
