@@ -6,15 +6,15 @@
 class Temperature
 {
 private:
-    DallasTemperature* _sensor;
+    DallasTemperature *_sensor;
+    float currentTemp;
+    float previousTemp;
 
 public:
-    int currentTemp;
-    int previousTemp;
-
-    Temperature(DallasTemperature*);
-    int getTempInt();
-    String getTempString();
+    Temperature(DallasTemperature *);
+    bool requestOnBus();
+    float getTemp();
+    String getTempString(String suffix = "");
 };
 
 #endif

@@ -139,19 +139,16 @@ void loop(void)
   if (actualTime != prevActualTime && timeUNIX != 0)
   { // If a second has passed
     prevActualTime = actualTime;
-    Serial.printf("\rUTC time:\t%d:%d:%d   ", getHours(actualTime), getMinutes(actualTime), getSeconds(actualTime));
-    Serial.println("\n");
-    
-    String temp = String(getTemperature());
-    webSocket.broadcastTXT(temp);
+    // Serial.printf("\rUTC time:\t%d:%d:%d   ", getHours(actualTime), getMinutes(actualTime), getSeconds(actualTime));
+    // Serial.println("\n");
 
-    Serial.print(String(temp));
-    Serial.println("ºC");
+    bool hasChanged = temperature.requestOnBus();
 
-    Serial.println(temperature.getTempInt());
-    Serial.println(temperature.getTempString());
-    Serial.println("temperature.getTempString()");
-
+    if (hasChanged)
+    {
+      String temp = temperature.getTempString();
+      webSocket.broadcastTXT(temp);
+    }
   }
 
   server.handleClient(); // Listen for HTTP requests from clients
@@ -292,8 +289,11 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t *payload, size_t lenght)
     { // the browser sends an N when the rainbow effect is disabled
       rainbow = false;
     }
-    else if (payload[0] == 'getTemp')
+    else if (payload[0] == 'T')
     {
+      temperature.requestOnBus();
+      String tmp = temperature.getTempString();
+      webSocket.broadcastTXT(tmp);
     }
 
     break;
@@ -440,17 +440,4 @@ inline int getMinutes(uint32_t UNIXTime)
 inline int getHours(uint32_t UNIXTime)
 {
   return UNIXTime / 3600 % 24;
-}
-
-int getTemperature()
-{
-  sensors.requestTemperatures();
-
-  currentTemperature = sensors.getTempCByIndex(0);
-
-  if (previousTemp != currentTemperature)
-  {
-    previousTemp = currentTemperature;
-  }
-  return currentTemperature;
 }

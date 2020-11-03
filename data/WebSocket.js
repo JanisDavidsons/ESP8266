@@ -1,31 +1,24 @@
 var rainbowEnable = false;
 var connection = new WebSocket('ws://' + location.hostname + ':81/', ['arduino']);
+
 connection.onopen = function () {
   connection.send('Connect ' + new Date());
+  getTemperature();
 };
 connection.onerror = function (error) {
   console.log('WebSocket Error ', error);
 };
-connection.onmessage = function (e) {
-  console.log('Server: ', e.data);
+connection.onmessage = (event) => {
+  processReceivedCommand(event);
 };
 connection.onclose = function () {
   console.log('WebSocket connection closed');
 };
 
-<<<<<<< Updated upstream
-function sendRGB () {
-  var r = document.getElementById('r').value** 2 / 1023;
-  var g = document.getElementById('g').value** 2 / 1023;
-  var b = document.getElementById('b').value** 2 / 1023;
-=======
-document.getElementById('temperature-C').onload(()=>getTemperature);
-
 function sendRGB() {
   var r = document.getElementById("r").value ** 2 / 1023;
   var g = document.getElementById("g").value ** 2 / 1023;
   var b = document.getElementById("b").value ** 2 / 1023;
->>>>>>> Stashed changes
 
   var rgb = r << 20 | g << 10 | b;
   var rgbstr = '#' + rgb.toString(16);
@@ -55,15 +48,12 @@ function rainbowEffect () {
     document.getElementById('b').disabled = false;
     sendRGB();
   }
-<<<<<<< Updated upstream
-=======
 }
 
 function processReceivedCommand(event) {
-  document.getElementById('temperature-C').innerHTML = event.data
+  document.getElementById('temperature-C').innerHTML = event.data;
 }
 
 function getTemperature(){
-  connection.send('getTemp');
->>>>>>> Stashed changes
+  connection.send('T');
 }
