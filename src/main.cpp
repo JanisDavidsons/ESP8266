@@ -20,6 +20,9 @@ unsigned long prevNTP = 0;
 unsigned long lastNTPResponse = millis();
 uint32_t timeUNIX = 0;
 unsigned long prevActualTime = 0;
+const unsigned long tempRequestInterval = 1000; // temp request every second
+unsigned long tempRequestTime = 0;              // time at which temp. has been requested
+const unsigned long DS_delay = 750;             // time that takes for temperature measuremts to happen
 
 ESP8266WebServer server(80);    // Create a webserver object that listens for HTTP request on port 80
 WebSocketsServer webSocket(81); // create a websocket server on port 81
@@ -142,19 +145,22 @@ void loop(void)
     // Serial.printf("\rUTC time:\t%d:%d:%d   ", getHours(actualTime), getMinutes(actualTime), getSeconds(actualTime));
     // Serial.println("\n");
 
-    bool hasChanged = temperature.requestOnBus();
+    temperature.requestOnBus();       //send temp request signal to sensor
+    tempRequestTime = currentMillis;  //record temp request time
+  }
 
-    if (hasChanged)
+  if (currentMillis - tempRequestTime > DS_delay && temperature.getIsTempRequested())  // give some time to temp sensor to get data
+  {
+    String temp = temperature.getTempString();
+    if (temperature.hasTempChanged())
     {
-      String temp = temperature.getTempString();
       webSocket.broadcastTXT(temp);
     }
   }
 
   server.handleClient(); // Listen for HTTP requests from clients
 
-  webSocket.loop();      // constantly check for websocket events
-  server.handleClient(); // run the server
+  webSocket.loop(); // constantly check for websocket events
 
   if (rainbow)
   { // if the rainbow effect is turned on

@@ -5,6 +5,7 @@
 Temperature::Temperature(DallasTemperature *_dallasTmp) : currentTemp(-127), previousTemp(-127)
 {
     _sensor = _dallasTmp;
+    setWaitForResults();
 };
 
 /**
@@ -14,6 +15,7 @@ Temperature::Temperature(DallasTemperature *_dallasTmp) : currentTemp(-127), pre
  */
 float Temperature::getTemp()
 {
+    Temperature::tempRequested = false;
     return currentTemp;
 };
 
@@ -26,6 +28,7 @@ float Temperature::getTemp()
 String Temperature::getTempString(String suffix)
 {
     String toString = String(currentTemp, 2);
+    tempRequested = false;
     return toString + suffix;
 };
 
@@ -34,15 +37,44 @@ String Temperature::getTempString(String suffix)
  *
  * @return true if temperature has changed since last request, otherwise returns false.
  */
-bool Temperature::requestOnBus()
+void Temperature::requestOnBus()
 {
     _sensor->requestTemperatures();
     currentTemp = _sensor->getTempCByIndex(0);
+    tempRequested = true;
+};
 
+/**
+ * Should program excecution stop and wait until data arrive.
+ *
+ * @param Optional true to block program while rading temperature, false to carry on with code excecution. (default = false)
+ */
+void Temperature::setWaitForResults(bool wait)
+{
+    _sensor->setWaitForConversion(wait);
+};
+
+/** 
+ * Get if temperature is already been requested and availiable in memory
+ * 
+ * @param True if request is done and data available, otherwise false. 
+ */
+bool Temperature::getIsTempRequested()
+{
+    return tempRequested;
+}
+
+/** 
+ * Get if temperature has changed since last request
+ * 
+ * @param True if temperature changed, otherwise false. 
+ */
+bool Temperature::hasTempChanged()
+{
     if (currentTemp != previousTemp)
     {
         previousTemp = currentTemp;
         return true;
     }
     return false;
-};
+}

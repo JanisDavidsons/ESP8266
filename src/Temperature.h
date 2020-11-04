@@ -7,14 +7,20 @@ class Temperature
 {
 private:
     DallasTemperature *_sensor;
-    float currentTemp;
-    float previousTemp;
+    float currentTemp = -127;
+    float previousTemp = -127;
+    bool tempRequested = false;
+    
 
 public:
     Temperature(DallasTemperature *);
-    bool requestOnBus();
+    void requestOnBus();
     float getTemp();
     String getTempString(String suffix = "");
+    void setWaitForResults(bool wait = false);
+    bool getIsTempRequested();
+    bool setIsTempRequested();
+    bool hasTempChanged();
 };
 
 #endif
