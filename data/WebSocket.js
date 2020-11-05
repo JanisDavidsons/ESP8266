@@ -57,3 +57,7 @@ function processReceivedCommand(event) {
 function getTemperature(){
   connection.send('T');
 }
+
+function delteCsv(){
+  connection.send("D")
+}
