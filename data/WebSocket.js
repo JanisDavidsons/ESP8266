@@ -1,10 +1,9 @@
 var rainbowEnable = false;
-var connection = new WebSocket("ws://" + location.hostname + ":81/", [
-  "arduino",
-]);
+var connection = new WebSocket('ws://' + location.hostname + ':81/', ['arduino']);
 
 connection.onopen = function () {
-  connection.send("Connect " + new Date());
+  connection.send('Connect ' + new Date());
+  getTemperature();
 };
 connection.onerror = function (error) {
   console.log("WebSocket Error ", error);
@@ -53,5 +52,12 @@ function rainbowEffect() {
 }
 
 function processReceivedCommand(event) {
-  document.getElementById('temperature-C').innerHTML = event.data
+  document.getElementById('temperature-C').innerHTML = event.data;
 }
+
+function getTemperature(){
+  connection.send('T');
+}
+
+function delteCsv(){
+  connection.send("D")

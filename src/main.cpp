@@ -5,6 +5,7 @@
 #include <WiFiUdp.h>
 #include <OneWire.h>
 #include <DallasTemperature.h>
+#include "Temperature.h"
 
 const char *ssid = "Janis_network";  // The SSID (name) of the Wi-Fi network you want to connect to
 const char *password = "8378969948"; // The password of the Wi-Fi network
@@ -12,12 +13,22 @@ const char *password = "8378969948"; // The password of the Wi-Fi network
 const int oneWireBus = 4;
 OneWire oneWire(oneWireBus);
 DallasTemperature sensors(&oneWire);
+Temperature temperature(&sensors);
 
 unsigned long intervalNTP = 60000; // Request NTP time every minute
 unsigned long prevNTP = 0;
 unsigned long lastNTPResponse = millis();
 uint32_t timeUNIX = 0;
 unsigned long prevActualTime = 0;
+const unsigned long tempRequestInterval = 1000; // temp request every second
+unsigned long tempRequestTime = 0;              // time at which temp. has been requested
+const unsigned long DS_delay = 750;             // time that takes for temperature measuremts to happen
+//littleFS constants
+const String LOG_FILE_PATH = "/tempLog.csv";
+const String LOG_FILE_PATH_GRAPH = "/tempLogGraph.csv";
+const char *WRITE_FILE = "w";
+const char *APPEND_FILE = "a";
+bool LOG_GRAPH_TYPE = true;
 
 ESP8266WebServer server(80);    // Create a webserver object that listens for HTTP request on port 80
 WebSocketsServer webSocket(81); // create a websocket server on port 81
@@ -41,12 +52,13 @@ inline int getSeconds(uint32_t actualTime);
 void startWebSocket();
 void startSPIFFS();
 void startWiFi();
+int getTemperature();
 
 #define LED_RED 15 // specify the pins with an RGB LED connected
 #define LED_GREEN 12
 #define LED_BLUE 13
 
-float temperature = -127;
+float currentTemperature = -127;
 float previousTemp = -127;
 
 void setup(void)
@@ -71,6 +83,7 @@ void setup(void)
   startWebSocket(); // Start a WebSocket server
 
   startServer(); // Start a HTTP server with a file read handler and an upload handler
+
   if (!WiFi.hostByName(NTPServerName, timeServerIP))
   { // Get the IP address of the NTP server
     Serial.println("DNS lookup failed. Rebooting.");
@@ -130,32 +143,70 @@ void loop(void)
     ESP.reset();
   }
 
-  uint32_t actualTime = timeUNIX + (currentMillis - lastNTPResponse) / 1000;
-  if (actualTime != prevActualTime && timeUNIX != 0)
-  { // If a second has passed since last print
-    prevActualTime = actualTime;
-    Serial.printf("\rUTC time:\t%d:%d:%d   ", getHours(actualTime), getMinutes(actualTime), getSeconds(actualTime));
-    Serial.println("");
-    sensors.requestTemperatures();
+  if (timeUNIX != 0)
+  {
+    uint32_t actualTime = timeUNIX + (currentMillis - lastNTPResponse) / 1000;
 
-    temperature = sensors.getTempCByIndex(0);
-    if (previousTemp != temperature)
-    {
-      Serial.print(temperature);
-      Serial.println("ºC");
+    if (actualTime != prevActualTime && timeUNIX != 0)
+    { // If a second has passed
+      prevActualTime = actualTime;
+      // Serial.printf("\rUTC time:\t%d:%d:%d   ", getHours(actualTime), getMinutes(actualTime), getSeconds(actualTime));
+      // Serial.println("\n");
 
-      String broadcastTemp = String(temperature);
-
-      webSocket.broadcastTXT(broadcastTemp);
-
-      previousTemp = temperature;
+      temperature.requestOnBus();      //send temp request signal to sensor
+      tempRequestTime = currentMillis; //record temp request time
     }
+
+    if (currentMillis - tempRequestTime > DS_delay && temperature.getIsTempRequested()) // give some time to temp sensor to get data
+    {
+      String temp = temperature.getTempString();
+      if (temperature.hasTempChanged())
+      {
+        webSocket.broadcastTXT(temp);
+      }
+
+      if (LOG_GRAPH_TYPE)
+      {
+        File tempLog = LittleFS.open(LOG_FILE_PATH_GRAPH, APPEND_FILE);
+        tempLog.print(actualTime);
+        tempLog.print(",");
+        tempLog.println(temperature.getTemp());
+        tempLog.close();
+      }
+      else
+      {
+        if (!LittleFS.exists(LOG_FILE_PATH))
+        {
+          Serial.println("No log file found, creating new ...");
+          File tempLog = LittleFS.open(LOG_FILE_PATH, WRITE_FILE);
+          tempLog.print("HOURS,");
+          tempLog.print("MINUTES,");
+          tempLog.print("SECONDS,");
+          tempLog.println("TEMPERATURE *C,");
+          tempLog.close();
+        }
+
+        File tempLog = LittleFS.open(LOG_FILE_PATH, APPEND_FILE);
+        tempLog.print(getHours(actualTime));
+        tempLog.print(",");
+        tempLog.print(getMinutes(actualTime));
+        tempLog.print(",");
+        tempLog.print(getSeconds(actualTime));
+        tempLog.print(",");
+        tempLog.println(temperature.getTemp());
+        tempLog.close();
+      }
+    }
+  }
+  else
+  {
+    sendNTPpacket(timeServerIP);
+    delay(500);
   }
 
   server.handleClient(); // Listen for HTTP requests from clients
 
-  webSocket.loop();      // constantly check for websocket events
-  server.handleClient(); // run the server
+  webSocket.loop(); // constantly check for websocket events
 
   if (rainbow)
   { // if the rainbow effect is turned on
@@ -189,6 +240,8 @@ String getContentType(String filename)
     return "image/x-icon";
   else if (filename.endsWith(".xml"))
     return "text/xml";
+  else if (filename.endsWith(".csv"))
+    return "text/csv";
   else if (filename.endsWith(".pdf"))
     return "application/x-pdf";
   else if (filename.endsWith(".zip"))
@@ -255,18 +308,18 @@ void handleFileUpload()
 }
 
 void webSocketEvent(uint8_t num, WStype_t type, uint8_t *payload, size_t lenght)
-{ // When a WebSocket message is received
+{
 
   switch (type)
   {
-  case WStype_DISCONNECTED: // if the websocket is disconnected
+  case WStype_DISCONNECTED:
     Serial.printf("[%u] Disconnected!\n", num);
     break;
   case WStype_CONNECTED:
-  { // if a new websocket connection is established
+  {
     IPAddress ip = webSocket.remoteIP(num);
     Serial.printf("[%u] Connected from %d.%d.%d.%d url: %s\n", num, ip[0], ip[1], ip[2], ip[3], payload);
-    rainbow = false; // Turn rainbow off when a new connection is established
+    rainbow = false;
   }
   break;
   case WStype_TEXT: // if new text data is received
@@ -290,6 +343,17 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t *payload, size_t lenght)
     { // the browser sends an N when the rainbow effect is disabled
       rainbow = false;
     }
+    else if (payload[0] == 'T')
+    {
+      temperature.requestOnBus();
+      String tmp = temperature.getTempString();
+      webSocket.broadcastTXT(tmp);
+    }
+    else if (payload[0] == 'D')
+    {
+      LittleFS.remove(LOG_FILE_PATH);
+    }
+
     break;
   }
 }
@@ -433,5 +497,5 @@ inline int getMinutes(uint32_t UNIXTime)
 
 inline int getHours(uint32_t UNIXTime)
 {
-  return UNIXTime / 3600 % 24;
+  return (UNIXTime / 3600 % 24) + 2;
 }
