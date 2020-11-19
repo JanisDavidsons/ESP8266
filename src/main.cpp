@@ -6,11 +6,27 @@
 #include <OneWire.h>
 #include <DallasTemperature.h>
 #include "Temperature.h"
+#include <FastLED.h>
+#include <ArduinoJson.h>
+
+#define NUM_LEDS 1
+#define CLOCK_PIN 14 // D5
+#define DATA_PIN 12  // D6
+CRGB leds[NUM_LEDS];
+int r = 125;
+int g = 125;
+int b = 125;
+bool rgbOn = true;
+
+const char RGB_ON[] = "rgbOn";
+const char RGB_OFF[] = "rgbOff";
+const char SET_RGB = '#';
+const char GET_TEMP[] = "getTemp";
 
 const char *ssid = "Janis_network";  // The SSID (name) of the Wi-Fi network you want to connect to
 const char *password = "8378969948"; // The password of the Wi-Fi network
 
-const int oneWireBus = 4;
+const int oneWireBus = 4; //D2
 OneWire oneWire(oneWireBus);
 DallasTemperature sensors(&oneWire);
 Temperature temperature(&sensors);
@@ -23,12 +39,16 @@ unsigned long prevActualTime = 0;
 const unsigned long tempRequestInterval = 1000; // temp request every second
 unsigned long tempRequestTime = 0;              // time at which temp. has been requested
 const unsigned long DS_delay = 750;             // time that takes for temperature measuremts to happen
+unsigned long loggerInterval = 1000;
+unsigned long lastLogTime = 0;
+
 //littleFS constants
 const String LOG_FILE_PATH = "/tempLog.csv";
 const String LOG_FILE_PATH_GRAPH = "/tempLogGraph.csv";
 const char *WRITE_FILE = "w";
 const char *APPEND_FILE = "a";
-bool LOG_GRAPH_TYPE = true;
+bool LOG_GRAPH = false;
+bool LOG_FILE_TYPE = false;
 
 ESP8266WebServer server(80);    // Create a webserver object that listens for HTTP request on port 80
 WebSocketsServer webSocket(81); // create a websocket server on port 81
@@ -68,21 +88,18 @@ void setup(void)
   pinMode(LED_GREEN, OUTPUT);
   pinMode(LED_BLUE, OUTPUT);
 
-  Serial.begin(115200); // Start the Serial communication to send messages to the computer
+  Serial.begin(115200);
   delay(10);
   Serial.println('\n');
 
+  LEDS.addLeds<P9813, DATA_PIN, CLOCK_PIN>(leds, NUM_LEDS);
+  FastLED.addLeds<P9813, DATA_PIN, CLOCK_PIN>(leds, NUM_LEDS);
   sensors.begin();
-
   startUDP();
-
-  startWiFi(); // Start a Wi-Fi access point, and try to connect to some given access points. Then wait for either an AP or STA connection
-
-  startSPIFFS(); // Start the SPIFFS and list all contents
-
+  startWiFi();      // Start a Wi-Fi access point, and try to connect to some given access points. Then wait for either an AP or STA connection
+  startSPIFFS();    // Start the SPIFFS and list all contents
   startWebSocket(); // Start a WebSocket server
-
-  startServer(); // Start a HTTP server with a file read handler and an upload handler
+  startServer();    // Start a HTTP server with a file read handler and an upload handler
 
   if (!WiFi.hostByName(NTPServerName, timeServerIP))
   { // Get the IP address of the NTP server
@@ -155,6 +172,7 @@ void loop(void)
 
       temperature.requestOnBus();      //send temp request signal to sensor
       tempRequestTime = currentMillis; //record temp request time
+      // Serial.printf("currentMillis : %lu loggerInterval: %lu lastLogTime: %lu \n", currentMillis, loggerInterval, lastLogTime);
     }
 
     if (currentMillis - tempRequestTime > DS_delay && temperature.getIsTempRequested()) // give some time to temp sensor to get data
@@ -165,16 +183,21 @@ void loop(void)
         webSocket.broadcastTXT(temp);
       }
 
-      if (LOG_GRAPH_TYPE)
+      if (currentMillis - loggerInterval > lastLogTime && LOG_GRAPH)
       {
+        Serial.printf("graph data logged at : %d:%d:%d", getHours(actualTime), getMinutes(actualTime), getSeconds(actualTime));
+        Serial.println("\n");
+
         File tempLog = LittleFS.open(LOG_FILE_PATH_GRAPH, APPEND_FILE);
         tempLog.print(actualTime);
         tempLog.print(",");
         tempLog.println(temperature.getTemp());
         tempLog.close();
+        lastLogTime = currentMillis;
       }
-      else
+      else if (currentMillis - loggerInterval > lastLogTime && LOG_FILE_TYPE)
       {
+        Serial.println("Logged in file");
         if (!LittleFS.exists(LOG_FILE_PATH))
         {
           Serial.println("No log file found, creating new ...");
@@ -195,6 +218,8 @@ void loop(void)
         tempLog.print(",");
         tempLog.println(temperature.getTemp());
         tempLog.close();
+
+        lastLogTime = currentMillis;
       }
     }
   }
@@ -322,36 +347,143 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t *payload, size_t lenght)
     rainbow = false;
   }
   break;
-  case WStype_TEXT: // if new text data is received
-    Serial.printf("[%u] get Text: %s\n", num, payload);
-    if (payload[0] == '#')
-    {                                                                       // we get RGB data
-      uint32_t rgb = (uint32_t)strtol((const char *)&payload[1], NULL, 16); // decode rgb data
-      int r = ((rgb >> 20) & 0x3FF);                                        // 10 bits per color, so R: bits 20-29
-      int g = ((rgb >> 10) & 0x3FF);                                        // G: bits 10-19
-      int b = rgb & 0x3FF;                                                  // B: bits  0-9
 
-      analogWrite(LED_RED, r); // write it to the LED output pins
-      analogWrite(LED_GREEN, g);
-      analogWrite(LED_BLUE, b);
+  case WStype_TEXT: // if new text data is received
+
+    DynamicJsonDocument doc(1024);
+    deserializeJson(doc, (const char *)payload); //extracting json object from received string
+    JsonObject obj = doc.as<JsonObject>();
+
+    // serializeJsonPretty(doc, Serial); //print incoming object to console
+
+    if (obj["rgb"])
+    { // we get RGB data
+      Serial.println("set rgb");
+
+      r = obj["rgb"]["red"];
+      g = obj["rgb"]["green"];
+      b = obj["rgb"]["blue"];
+
+      Serial.println(r);
+      Serial.println(g);
+      Serial.println(b);
+
+      leds[0].setRGB(r, g, b);
+      FastLED.show(); // B: bits  0-9
     }
-    else if (payload[0] == 'R')
-    { // the browser sends an R when the rainbow effect is enabled
-      rainbow = true;
-    }
-    else if (payload[0] == 'N')
-    { // the browser sends an N when the rainbow effect is disabled
-      rainbow = false;
-    }
-    else if (payload[0] == 'T')
+    // else if (payload[0] == 'R')
+    // { // the browser sends an R when the rainbow effect is enabled
+    //   rainbow = true;
+    // }
+    // else if (payload[0] == 'N')
+    // { // the browser sends an N when the rainbow effect is disabled
+    //   rainbow = false;
+    // }
+    else if (obj["temp"])
     {
+      Serial.println("get temp");
       temperature.requestOnBus();
-      String tmp = temperature.getTempString();
-      webSocket.broadcastTXT(tmp);
+      float tmp = temperature.getTemp();
+
+      StaticJsonDocument<200> doc;
+
+      JsonObject tempObj = doc.createNestedObject("temp");
+      tempObj["value"] = tmp;
+
+      String json;
+      serializeJson(doc, json);
+      webSocket.broadcastTXT(json);
     }
-    else if (payload[0] == 'D')
+    else if (obj["clearLogFile"])
     {
-      LittleFS.remove(LOG_FILE_PATH);
+      Serial.println("clearing graph log file...");
+      File logFile = LittleFS.open(LOG_FILE_PATH_GRAPH, WRITE_FILE);
+      logFile.close();
+      // LittleFS.remove(LOG_FILE_PATH);
+    }
+    else if (obj["rgbOn"])
+    {
+      // Serial.print("Get rbg on request:");
+
+      leds[0].setRGB(r, g, b);
+      FastLED.show();
+
+      String red = String(r);
+      String green = String(g);
+      String blue = String(b);
+
+      StaticJsonDocument<400> doc;
+
+      JsonObject rgbObj = doc.createNestedObject("rgb");
+      rgbObj["red"] = red;
+      rgbObj["green"] = green;
+      rgbObj["blue"] = blue;
+
+      String json;
+      serializeJson(doc, json);
+      webSocket.broadcastTXT(json);
+    }
+    else if (obj["rgbOff"])
+    {
+      leds[0].setRGB(0, 0, 0);
+      FastLED.show();
+    }
+    else if (obj["getRgbData"])
+    {
+      StaticJsonDocument<400> doc;
+
+      JsonObject rgbObj = doc.createNestedObject("rgbData");
+      rgbObj["red"] = r;
+      rgbObj["green"] = g;
+      rgbObj["blue"] = b;
+
+      String json;
+      serializeJson(doc, json);
+      webSocket.broadcastTXT(json);
+    }
+    else if (obj["logGraph"])
+    {
+      if (obj["logGraph"]["value"] == true)
+      {
+        LOG_GRAPH = true;
+      }
+      else
+      {
+        LOG_GRAPH = false;
+      }
+      Serial.print("graph logging: ");
+      Serial.println(LOG_GRAPH);
+    }
+    else if (obj["getInitData"])
+    {
+      StaticJsonDocument<400> doc;
+
+      JsonObject initObj = doc.createNestedObject("initData");
+      JsonObject rgbData = initObj.createNestedObject("rgbData");
+      JsonObject tempData = initObj.createNestedObject("tempData");
+      JsonObject graphLogData = initObj.createNestedObject("graphLogData");
+      JsonObject logInterval = initObj.createNestedObject("logInterval");
+
+      rgbData["red"] = r;
+      rgbData["green"] = g;
+      rgbData["blue"] = b;
+
+      tempData["currentTemp"] = temperature.getTemp();
+
+      graphLogData["logging"] = LOG_GRAPH;
+
+      logInterval["value"] = loggerInterval / 1000;
+
+      String json;
+      serializeJson(doc, json);
+      serializeJsonPretty(doc, Serial);
+      webSocket.broadcastTXT(json);
+    }
+    else if (obj["logInterval"])
+    {
+      int interval = obj["logInterval"];
+      Serial.println(interval);
+      loggerInterval = interval * 1000;
     }
 
     break;

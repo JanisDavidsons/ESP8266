@@ -54,7 +54,7 @@
                 id="r"
                 type="range"
                 min="0"
-                max="1023"
+                max="255"
                 step="1"
                 oninput="sendRGB();"
                 value="0"
@@ -69,7 +69,7 @@
                 id="g"
                 type="range"
                 min="0"
-                max="1023"
+                max="255"
                 step="1"
                 oninput="sendRGB();"
                 value="0"
@@ -84,7 +84,7 @@
                 id="b"
                 type="range"
                 min="0"
-                max="1023"
+                max="255"
                 step="1"
                 oninput="sendRGB();"
                 value="0"
@@ -94,14 +94,43 @@
         </table>
         <p style="margin: 8px 0px">
           <button
-            id="rainbow"
+            id="toggleRGB"
             class="button"
             style="background-color: #999"
-            onclick="rainbowEffect();"
+            onclick="toggleRGB();"
           >
-            Rainbow
+            Toggle RGB
           </button>
+
+          <button
+            id="logGraph"
+            class="button"
+            style="background-color: rgb(167, 1, 1)"
+            onclick="logGraph();"
+          ></button>
         </p>
+        <table>
+          <tr>
+            <td>
+              <input
+              class="enabled"
+              id="logIntervalSlider"
+              type="range"
+              min="1"
+              max="1000"
+              step="1"
+              oninput="setLogInterval();"
+              value="0"
+            />
+            </td>
+          </tr>
+          <tr>
+            <td>
+              <span id="logIntervalValue">---</span>
+            </td>
+          </tr>
+        </table>
+
         <p>
           <i class="fas fa-thermometer-half" style="color: #059e8a"></i>
           <span class="ds-labels">Temperature Celsius</span>
@@ -111,7 +140,7 @@
       </div>
     </center>
     <center id="graph">
-      <h1 id="graph_h1">ESP8266 Temperature Logger</h1>
+      <h3 id="graph_h1">Temperature Logger</h3>
       <div id="chart_div"></div>
       <div id="loading">Loading ...</div>
       <div id="dateselect" style="visibility: hidden">
@@ -126,7 +155,7 @@
           id="delte_graph_csv"
           class="button"
           style="background-color: rgb(167, 1, 1)"
-          onclick="delteCsv();"
+          onclick="deleteCsv();"
         >
           Delete CSV
         </button>
